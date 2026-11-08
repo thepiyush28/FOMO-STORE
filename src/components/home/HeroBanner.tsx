@@ -123,7 +123,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                   onClick={onExploreClick}
                   className="gap-2 text-brand-navy font-bold shadow-md"
                 >
-                  <span>Explore Demo Products</span>
+                  <span>{storeConfig.isLiveData ? 'Explore Store Catalog' : 'Explore Demo Products'}</span>
                   <ArrowRight className="w-4 h-4 text-brand-navy" />
                 </Button>
                 <div className="flex items-center gap-1.5 text-xs text-slate-500 px-2 justify-center">
@@ -147,9 +147,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                <span className="font-semibold text-brand-navy">Brand Visual Spec</span>
-                <Badge variant="placeholder" size="sm">
-                  Active Reference Asset
+                <span className="font-semibold text-brand-navy">
+                  {storeConfig.isLiveData ? 'FOMO Store • Rajauli' : 'Brand Visual Spec'}
+                </span>
+                <Badge variant={storeConfig.isLiveData ? 'green' : 'placeholder'} size="sm">
+                  {storeConfig.isLiveData ? 'COD & Store Pickup' : 'Active Reference Asset'}
                 </Badge>
               </div>
             </div>

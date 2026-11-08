@@ -5,6 +5,8 @@ export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
+  maxWidth?: string;
+  className?: string;
   children: React.ReactNode;
 }
 
@@ -12,6 +14,8 @@ export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
+  maxWidth = 'max-w-md',
+  className = '',
   children,
 }) => {
   useEffect(() => {
@@ -34,7 +38,7 @@ export const Modal: React.FC<ModalProps> = ({
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-10 animate-scaleUp max-h-[90vh] flex flex-col">
+      <div className={`relative w-full ${maxWidth} ${className} bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-10 animate-scaleUp max-h-[90vh] flex flex-col`}>
         {title && (
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
             <h3 className="text-base font-bold text-brand-navy">{title}</h3>

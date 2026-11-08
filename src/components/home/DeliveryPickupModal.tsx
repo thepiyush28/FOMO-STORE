@@ -67,7 +67,10 @@ export const DeliveryPickupModal: React.FC<DeliveryPickupModalProps> = ({
                 Fee: {storeConfig.deliveryFeePlaceholder}
               </span>
               <span className="bg-white/80 px-2 py-0.5 rounded border border-slate-200">
-                Radius: [Configurable Delivery Radius]
+                Radius:{' '}
+                {storeConfig.deliveryRadiusKm !== null && storeConfig.deliveryRadiusKm !== undefined
+                  ? `${storeConfig.deliveryRadiusKm} km around Rajauli`
+                  : '[Configurable Delivery Radius]'}
               </span>
             </div>
           </div>

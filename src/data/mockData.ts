@@ -1,14 +1,17 @@
 import { Category, DemoProduct, StoreConfig } from '../types';
 
 export const STORE_INITIAL_CONFIG: StoreConfig = {
-  isOpen: true,
-  statusNotice: 'Store is currently OPEN for orders. [Configurable store status setting]',
+  isOpen: false,
+  statusNotice: 'Store is temporarily closed while configuration is being finalized',
   addressPlaceholder: '[Store address in Rajauli, Nawada, Bihar to be finalized]',
   hoursPlaceholder: '[Opening hours e.g. 08:00 AM - 09:00 PM to be configured]',
   phonePlaceholder: '[Store customer care & WhatsApp number to be provided]',
   deliveryFeePlaceholder: '₹[Configurable Delivery Fee]',
   freeDeliveryThresholdPlaceholder: '₹[Configurable Free Delivery Threshold]',
   fssaiPlaceholder: '[FSSAI Registration/License number pending]',
+  isLiveData: false,
+  connectionStatus: 'demo',
+  connectionError: null,
 };
 
 export const CATEGORIES: Category[] = [

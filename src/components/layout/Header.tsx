@@ -41,14 +41,22 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </button>
 
-          {/* Store Open/Closed indicator (explicit placeholder toggle) */}
+          {/* Store Open/Closed indicator (consistent with StoreNoticeBanner & truthful connection status) */}
           <button
             onClick={onOpenStoreModal}
             className="flex items-center gap-1.5 px-2 py-0.5 rounded-full hover:bg-slate-200/60 transition-colors flex-shrink-0"
             title="Click to view store operating status"
           >
             <Clock className="w-3.5 h-3.5 text-slate-500" />
-            {storeConfig.isOpen ? (
+            {storeConfig.connectionStatus === 'connecting' ? (
+              <Badge variant="placeholder" size="sm" className="font-semibold">
+                ● Checking Status…
+              </Badge>
+            ) : storeConfig.connectionStatus === 'error' ? (
+              <Badge variant="red" size="sm" className="font-semibold">
+                ● Status Unavailable
+              </Badge>
+            ) : storeConfig.isOpen ? (
               <Badge variant="green" size="sm" className="font-semibold">
                 ● Store Open
               </Badge>
@@ -58,7 +66,13 @@ export const Header: React.FC<HeaderProps> = ({
               </Badge>
             )}
             <span className="text-[10px] text-amber-700 font-mono hidden md:inline">
-              [Configurable]
+              {storeConfig.connectionStatus === 'connected'
+                ? '[Live Status]'
+                : storeConfig.connectionStatus === 'connecting'
+                ? '[Connecting…]'
+                : storeConfig.connectionStatus === 'error'
+                ? '[Connection Error]'
+                : '[Demo Mode]'}
             </span>
           </button>
         </div>
@@ -116,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenCartDemo}
             className="relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-brand-orange text-brand-navy font-bold text-xs sm:text-sm hover:bg-brand-orange-hover shadow-sm transition-transform active:scale-95 touch-target"
-            title="Cart Demo (Prototype)"
+            title="View Shopping Cart"
           >
             <ShoppingBag className="w-4 h-4 text-brand-navy" />
             <span className="hidden sm:inline">Cart</span>

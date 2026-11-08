@@ -1,6 +1,7 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { StoreConfig } from '../../types';
-import { MapPin, Phone, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
+import { MapPin, Phone, Clock, ShieldCheck, AlertCircle, Bike } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 
 interface FooterProps {
@@ -16,11 +17,50 @@ export const Footer: React.FC<FooterProps> = ({ storeConfig }) => {
           <div className="flex items-center gap-2.5 text-xs text-amber-200">
             <AlertCircle className="w-5 h-5 text-brand-orange flex-shrink-0" />
             <span>
-              <strong>Phase 1 Frontend Prototype Notice:</strong> Real business values, prices, contact numbers, and registrations are marked as placeholders and will be connected upon store launch. Checkout and ordering are non-functional in this demo.
+              {storeConfig.connectionStatus === 'connected' ? (
+                <>
+                  <strong>Live Supabase Storefront Connected:</strong> Catalog, inventory, and store
+                  status are synchronized with FOMO Store in Rajauli. Any unconfigured business fields
+                  remain explicitly marked as placeholders until finalized in <code>/admin</code>.
+                </>
+              ) : storeConfig.connectionStatus === 'connecting' ? (
+                <>
+                  <strong>Connecting to Supabase:</strong> Verifying live catalog and store settings
+                  connection…
+                </>
+              ) : storeConfig.connectionStatus === 'error' ? (
+                <>
+                  <strong>Supabase Connection Error:</strong> Could not reach the live Supabase Data
+                  API ({storeConfig.connectionError || 'Network/Fetch error'}). Live catalog and
+                  checkout remain disabled until the connection succeeds.
+                </>
+              ) : (
+                <>
+                  <strong>Demo Mode Notice:</strong> Real business values, prices, contact numbers,
+                  and registrations are marked as placeholders until <code>VITE_SUPABASE_URL</code>{' '}
+                  and <code>VITE_SUPABASE_ANON_KEY</code> are connected.
+                </>
+              )}
             </span>
           </div>
-          <Badge variant="placeholder" size="sm" className="bg-brand-orange/20 text-brand-orange border-brand-orange/40 flex-shrink-0">
-            Phase 1 Prototype
+          <Badge
+            variant="placeholder"
+            size="sm"
+            className={`flex-shrink-0 ${
+              storeConfig.connectionStatus === 'connected'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                : storeConfig.connectionStatus === 'error'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-400/40'
+                : 'bg-brand-orange/20 text-brand-orange border-brand-orange/40'
+            }`}
+          >
+            {storeConfig.connectionStatus === 'connected'
+              ? 'Live Supabase Connected'
+              : storeConfig.connectionStatus === 'connecting'
+              ? 'Connecting to Supabase…'
+              : storeConfig.connectionStatus === 'error'
+              ? 'Supabase Connection Error'
+              : 'Demo Mode'}
           </Badge>
         </div>
 
@@ -103,11 +143,35 @@ export const Footer: React.FC<FooterProps> = ({ storeConfig }) => {
           </div>
         </div>
 
+        {/* Staff & Admin Access (Guarded strictly by Supabase RLS; never grants admin access to normal customers) */}
+        <div className="pt-6 pb-2 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+          <div className="flex items-center gap-4">
+            <Link
+              to="/admin"
+              className="text-slate-300 hover:text-brand-orange transition-colors flex items-center gap-1.5 font-semibold"
+            >
+              <ShieldCheck className="w-4 h-4 text-brand-orange" />
+              <span>Admin Login (/admin)</span>
+            </Link>
+            <span className="text-white/20">•</span>
+            <Link
+              to="/rider"
+              className="text-slate-300 hover:text-brand-orange transition-colors flex items-center gap-1.5 font-semibold"
+            >
+              <Bike className="w-4 h-4 text-brand-orange" />
+              <span>Delivery Partner (/rider)</span>
+            </Link>
+          </div>
+          <span className="text-[11px] text-slate-500 font-mono">
+            Protected by Supabase Role-Based Security
+          </span>
+        </div>
+
         {/* Bottom copyright & disclaimers */}
-        <div className="pt-6 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-400 gap-3">
+        <div className="pt-4 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-400 gap-3">
           <p>© 2026 FOMO Store. Rajauli, Nawada, Bihar. All rights reserved.</p>
           <p className="text-slate-400">
-            Phase 1 Frontend Prototype Built with React, Vite, TypeScript & Tailwind CSS.
+            FOMO Store V1 • Powered by React, Vite, TypeScript & Supabase.
           </p>
         </div>
       </div>

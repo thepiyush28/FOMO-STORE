@@ -157,7 +157,13 @@ export const HomePage: React.FC = () => {
       .then((dbCart) => {
         if (!active) return;
         if (Object.keys(dbCart).length > 0) {
-          setCartQuantities((prev) => ({ ...dbCart, ...prev }));
+          setCartQuantities((prev) => {
+            const merged = { ...dbCart };
+            for (const [k, v] of Object.entries(prev)) {
+              merged[k] = Math.max(merged[k] || 0, v);
+            }
+            return merged;
+          });
         }
       })
       .catch(() => {});

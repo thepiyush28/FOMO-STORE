@@ -72,6 +72,7 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   onViewOrders,
 }) => {
   const [step, setStep] = useState<'cart' | 'checkout' | 'confirmed'>('cart');
+  const [pendingCheckout, setPendingCheckout] = useState(false);
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [loadingAddresses, setLoadingAddresses] = useState(false);
@@ -98,10 +99,19 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       setStep('cart');
+      setPendingCheckout(false);
       setCheckoutError(null);
       setShowAddressForm(false);
     }
   }, [isOpen]);
+
+  // Auto-advance to checkout step if customer just logged in following a checkout click
+  useEffect(() => {
+    if (userId && pendingCheckout) {
+      setPendingCheckout(false);
+      setStep('checkout');
+    }
+  }, [userId, pendingCheckout]);
 
   useEffect(() => {
     if (isOpen && userId) {
@@ -183,6 +193,7 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   const handleProceedToCheckout = () => {
     setCheckoutError(null);
     if (!userId) {
+      setPendingCheckout(true);
       if (onRequireLogin) {
         onRequireLogin();
       }

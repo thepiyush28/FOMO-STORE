@@ -254,14 +254,13 @@ export const CustomerAccountSection: React.FC<CustomerAccountSectionProps> = ({
           <div className="max-w-sm mx-auto space-y-1">
             <h2 className="text-base font-bold text-brand-navy">Sign in to your FOMO Store account</h2>
             <p className="text-xs text-slate-500">
-              Save your delivery addresses in Rajauli, view past orders, and check out faster with
-              Phone OTP.
+              Save your delivery addresses in Rajauli, view past orders, and check out faster.
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-3 pt-2">
             <Button variant="primary" onClick={onRequireLogin} className="gap-2">
-              <Phone className="w-4 h-4" />
-              <span>Login with Phone OTP</span>
+              <User className="w-4 h-4" />
+              <span>Sign In / Create Account</span>
             </Button>
             <Link
               to="/admin"
@@ -307,6 +306,14 @@ export const CustomerAccountSection: React.FC<CustomerAccountSectionProps> = ({
                 </label>
                 <Input value={profile?.phone || 'Not linked'} disabled />
               </div>
+              {profile?.email && (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    Registered Email
+                  </label>
+                  <Input value={profile.email} disabled />
+                </div>
+              )}
               <div className="sm:col-span-2 flex justify-end">
                 <Button type="submit" size="sm" variant="primary" disabled={savingProfile}>
                   {savingProfile ? 'Saving...' : 'Save Profile'}

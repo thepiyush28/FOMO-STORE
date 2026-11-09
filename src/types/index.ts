@@ -65,6 +65,7 @@ export interface StoreConfig {
 export interface UserProfile {
   id: string;
   phone: string | null;
+  email?: string | null;
   full_name: string | null;
   role: UserRole;
   created_at?: string;

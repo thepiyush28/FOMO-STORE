@@ -1010,6 +1010,60 @@ export async function signInWithEmailPassword(
   return fetchCurrentUserProfile(data.user.id);
 }
 
+export async function signUpWithEmailPassword(
+  email: string,
+  password: string,
+  fullName?: string
+): Promise<{ user: unknown; profile: UserProfile | null; needsEmailConfirmation: boolean }> {
+  if (!supabase) {
+    throw new Error(
+      'Supabase is not configured. Configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env to register.'
+    );
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = fullName?.trim() || '';
+
+  const { data, error } = await supabase.auth.signUp({
+    email: cleanEmail,
+    password,
+    options: {
+      data: {
+        full_name: cleanName,
+      },
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const user = data.user;
+  const needsEmailConfirmation = !data.session;
+  let profile: UserProfile | null = null;
+  if (user && data.session) {
+    profile = await fetchCurrentUserProfile(user.id);
+  }
+
+  return { user, profile, needsEmailConfirmation };
+}
+
+export async function resetPasswordForEmail(email: string): Promise<void> {
+  if (!supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/` : undefined;
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function fetchCurrentUserProfile(userId: string): Promise<UserProfile | null> {
   if (!supabase || !userId) return null;
 
@@ -1021,9 +1075,20 @@ export async function fetchCurrentUserProfile(userId: string): Promise<UserProfi
 
   if (error || !data) return null;
 
+  let email: string | null = null;
+  try {
+    const { data: authData } = await supabase.auth.getSession();
+    if (authData.session?.user?.id === userId) {
+      email = authData.session.user.email || null;
+    }
+  } catch {
+    // Session read is best-effort
+  }
+
   return {
     id: String(data.id),
     phone: data.phone ? String(data.phone) : null,
+    email,
     full_name: data.full_name ? String(data.full_name) : null,
     role: (data.role as UserRole) || 'customer',
     created_at: data.created_at ? String(data.created_at) : undefined,

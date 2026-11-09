@@ -7,6 +7,7 @@ import {
   Receipt,
   RefreshCw,
   Phone,
+  User,
   RotateCcw,
   XCircle,
   CheckCircle2,
@@ -200,8 +201,8 @@ export const CustomerOrdersSection: React.FC<CustomerOrdersSectionProps> = ({
           </div>
           <div className="flex justify-center gap-3 pt-2">
             <Button variant="primary" onClick={onRequireLogin} className="gap-2">
-              <Phone className="w-4 h-4" />
-              <span>Sign In with Phone OTP</span>
+              <User className="w-4 h-4" />
+              <span>Sign In / Register</span>
             </Button>
             <Button variant="outline" onClick={onBackToShop}>
               Browse Catalog

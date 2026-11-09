@@ -139,6 +139,8 @@ export interface OrderRecord {
   total_amount: number;
   delivery_address: OrderDeliveryAddressSnapshot;
   payment_method: PaymentMethod;
+  /** unpaid = COD (collect on delivery) / not yet paid; paid only after gateway verification. */
+  payment_status?: string;
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;

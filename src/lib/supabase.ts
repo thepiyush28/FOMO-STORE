@@ -918,19 +918,37 @@ export function normalizeIndianPhone(rawPhone: string): string {
   return `+${digits}`;
 }
 
-export async function sendPhoneOtp(rawPhone: string): Promise<{ normalizedPhone: string }> {
+export function isValidIndianMobile(rawPhone: string): boolean {
+  return /^\+91[6-9]\d{9}$/.test(normalizeIndianPhone(rawPhone));
+}
+
+export async function sendPhoneOtp(
+  rawPhone: string,
+  options: { mode?: 'login' | 'register'; fullName?: string } = {}
+): Promise<{ normalizedPhone: string }> {
   if (!supabase) {
     throw new Error(
       'Supabase environment variables (VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY) are not configured. Phone OTP requires a connected Supabase project with an active SMS OTP provider.'
     );
   }
   const normalizedPhone = normalizeIndianPhone(rawPhone);
-  if (!/^\+\d{10,15}$/.test(normalizedPhone)) {
-    throw new Error('Please enter a valid 10-digit mobile number.');
+  if (!isValidIndianMobile(rawPhone)) {
+    throw new Error('Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8 or 9).');
   }
 
+  const mode = options.mode || 'login';
+  const cleanName = options.fullName?.trim() || '';
+  if (mode === 'register' && cleanName.length < 2) {
+    throw new Error('Please enter your full name to create an account.');
+  }
+
+  // Login must only work for existing customers; registration may create a new user.
   const { error } = await supabase.auth.signInWithOtp({
     phone: normalizedPhone,
+    options: {
+      shouldCreateUser: mode === 'register',
+      ...(mode === 'register' && cleanName ? { data: { full_name: cleanName } } : {}),
+    },
   });
 
   if (error) {
@@ -1307,6 +1325,18 @@ export interface PlaceOrderRpcResult {
   discount_amount: number;
   total_amount: number;
   status: OrderStatus;
+  payment_method?: PaymentMethod;
+  payment_status?: string;
+  created_at?: string;
+  duplicate?: boolean;
+}
+
+/** Creates a fresh client-side idempotency key for one checkout attempt. */
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `k-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export async function placeOrderViaRpc(params: {
@@ -1314,17 +1344,39 @@ export async function placeOrderViaRpc(params: {
   deliveryMode: DeliveryMode;
   addressId: string | null;
   paymentMethod?: PaymentMethod;
+  idempotencyKey?: string;
 }): Promise<PlaceOrderRpcResult> {
   if (!supabase) {
     throw new Error('Supabase is not configured. Live order placement requires Supabase connection.');
   }
 
-  const { data, error } = await supabase.rpc('place_order', {
+  const baseArgs = {
     p_items: params.items,
     p_delivery_mode: params.deliveryMode,
     p_address_id: params.deliveryMode === 'delivery' ? params.addressId : null,
     p_payment_method: params.paymentMethod || 'cod',
-  });
+  };
+
+  // Prefer the idempotent signature (migration 005). If it has not been applied to this
+  // database yet, PostgREST reports the function as not found and we fall back to the
+  // original signature; the UI still holds a single-flight lock against double submits.
+  if (params.idempotencyKey) {
+    const withKey = await supabase.rpc('place_order', {
+      ...baseArgs,
+      p_idempotency_key: params.idempotencyKey,
+    });
+    if (!withKey.error) {
+      return withKey.data as PlaceOrderRpcResult;
+    }
+    const msg = withKey.error.message || '';
+    const missingSignature =
+      withKey.error.code === 'PGRST202' || /could not find the function/i.test(msg);
+    if (!missingSignature) {
+      throw new Error(msg);
+    }
+  }
+
+  const { data, error } = await supabase.rpc('place_order', baseArgs);
 
   if (error) {
     throw new Error(error.message);
@@ -1513,6 +1565,7 @@ export async function fetchAdminAllData(): Promise<AdminDashboardBundle> {
       total_amount: Number(o.total_amount || 0),
       delivery_address: addr,
       payment_method: (o.payment_method as PaymentMethod) || 'cod',
+      payment_status: o.payment_status ? String(o.payment_status) : 'unpaid',
       cancel_reason: o.cancel_reason ? String(o.cancel_reason) : null,
       created_at: String(o.created_at),
       updated_at: String(o.updated_at),

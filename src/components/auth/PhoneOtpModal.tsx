@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -50,6 +50,16 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
   const [phoneFullName, setPhoneFullName] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [phoneOtpProviderNotice, setPhoneOtpProviderNotice] = useState<string | null>(null);
+  const [phoneMode, setPhoneMode] = useState<'login' | 'register'>('register');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [otpAttempts, setOtpAttempts] = useState(0);
+
+  // Resend cooldown countdown
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Email state
   const [emailInput, setEmailInput] = useState('');
@@ -136,27 +146,43 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
     }
   };
 
-  const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const MAX_OTP_ATTEMPTS = 5;
+  const RESEND_COOLDOWN_SECONDS = 60;
+
+  const requestOtp = async () => {
     setError(null);
     setInfoMessage(null);
     setPhoneOtpProviderNotice(null);
     setLoading(true);
     try {
-      const res = await sendPhoneOtp(phoneInput);
+      const res = await sendPhoneOtp(phoneInput, {
+        mode: phoneMode,
+        fullName: phoneFullName,
+      });
       setNormalizedPhone(res.normalizedPhone);
       setStep('otp');
+      setOtpCode('');
+      setOtpAttempts(0);
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
       setInfoMessage(`OTP sent via SMS to ${res.normalizedPhone}.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to send OTP.';
-      setError(msg);
+      const lower = msg.toLowerCase();
+      if (lower.includes('signups not allowed') || lower.includes('user not found')) {
+        setError('No account found for this mobile number. Please choose "Create Account" first.');
+      } else if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('security purposes')) {
+        setError('Too many OTP requests. Please wait a minute before trying again.');
+        setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      } else {
+        setError(msg);
+      }
       if (
-        msg.toLowerCase().includes('sms') ||
-        msg.toLowerCase().includes('provider') ||
-        msg.toLowerCase().includes('phone')
+        lower.includes('sms') ||
+        lower.includes('provider') ||
+        lower.includes('unsupported phone')
       ) {
         setPhoneOtpProviderNotice(
-          'SMS OTP Gateway is currently awaiting SMS provider configuration (e.g., Twilio) in Supabase. You can register and log in immediately using the Email & Password option.'
+          'SMS OTP is not live yet because an SMS provider has not been configured for this store. You can register and log in right now using the Email & Password option.'
         );
       }
     } finally {
@@ -164,16 +190,33 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
     }
   };
 
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await requestOtp();
+  };
+
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (otpAttempts >= MAX_OTP_ATTEMPTS) {
+      setError('Too many incorrect attempts. Please request a new OTP.');
+      return;
+    }
     setLoading(true);
     try {
       const profile = await verifyPhoneOtp(normalizedPhone, otpCode, phoneFullName);
       onSuccess(profile);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid or expired OTP code.');
+      const used = otpAttempts + 1;
+      setOtpAttempts(used);
+      setOtpCode('');
+      const base = err instanceof Error ? err.message : 'Invalid or expired OTP code.';
+      setError(
+        used >= MAX_OTP_ATTEMPTS
+          ? 'Too many incorrect attempts. Please request a new OTP.'
+          : `${base} (${MAX_OTP_ATTEMPTS - used} attempt${MAX_OTP_ATTEMPTS - used === 1 ? '' : 's'} left)`
+      );
     } finally {
       setLoading(false);
     }
@@ -534,22 +577,65 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
           </div>
         ) : step === 'phone' ? (
           <form onSubmit={handleSendOtp} className="space-y-3.5">
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
-              <span className="font-semibold text-brand-navy">Notice:</span> Phone OTP uses native Supabase SMS Auth. An external SMS Provider must be configured in your Supabase Auth settings to send verification SMS codes.
+            <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl">
+              {(['register', 'login'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    setPhoneMode(m);
+                    setError(null);
+                  }}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                    phoneMode === m
+                      ? 'bg-white text-brand-navy shadow-xs'
+                      : 'text-slate-600 hover:text-brand-navy'
+                  }`}
+                >
+                  {m === 'register' ? 'Create Account' : 'Sign In'}
+                </button>
+              ))}
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-brand-navy mb-1">
-                Your Name (Optional)
-              </label>
-              <Input
-                type="text"
-                value={phoneFullName}
-                onChange={(e) => setPhoneFullName(e.target.value)}
-                placeholder="e.g. Ramesh Kumar"
-                icon={<User className="w-4 h-4" />}
-              />
-            </div>
+            {phoneOtpProviderNotice ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-2">
+                <p>{phoneOtpProviderNotice}</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  fullWidth
+                  onClick={() => {
+                    setAuthMethod('email');
+                    setEmailMode(phoneMode === 'register' ? 'register' : 'login');
+                    setError(null);
+                  }}
+                >
+                  Continue with Email &amp; Password instead
+                </Button>
+              </div>
+            ) : (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
+                We will send a 6-digit verification code by SMS to your mobile number.
+              </div>
+            )}
+
+            {phoneMode === 'register' && (
+              <div>
+                <label className="block text-xs font-bold text-brand-navy mb-1">
+                  Full Name *
+                </label>
+                <Input
+                  type="text"
+                  required
+                  minLength={2}
+                  value={phoneFullName}
+                  onChange={(e) => setPhoneFullName(e.target.value)}
+                  placeholder="e.g. Ramesh Kumar"
+                  icon={<User className="w-4 h-4" />}
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-brand-navy mb-1">
@@ -558,6 +644,7 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
               <Input
                 type="tel"
                 required
+                inputMode="numeric"
                 value={phoneInput}
                 onChange={(e) => setPhoneInput(e.target.value)}
                 placeholder="10-digit mobile number"
@@ -566,8 +653,24 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
             </div>
 
             <div className="pt-2 flex flex-col gap-2">
-              <Button type="submit" variant="primary" fullWidth disabled={loading || !phoneInput.trim()}>
-                {loading ? 'Sending OTP...' : 'Send Verification OTP'}
+              <Button
+                type="submit"
+                variant="primary"
+                fullWidth
+                disabled={
+                  loading ||
+                  !phoneInput.trim() ||
+                  (phoneMode === 'register' && phoneFullName.trim().length < 2) ||
+                  resendCooldown > 0
+                }
+              >
+                {loading
+                  ? 'Sending OTP...'
+                  : resendCooldown > 0
+                  ? `Please wait ${resendCooldown}s`
+                  : phoneMode === 'register'
+                  ? 'Send OTP & Create Account'
+                  : 'Send OTP to Sign In'}
               </Button>
               <Button type="button" variant="ghost" size="sm" fullWidth onClick={onClose}>
                 Cancel
@@ -593,10 +696,25 @@ export const PhoneOtpModal: React.FC<PhoneOtpModalProps> = ({
             </div>
 
             <div className="pt-2 flex flex-col gap-2">
-              <Button type="submit" variant="primary" fullWidth disabled={loading || otpCode.length < 4}>
-                {loading ? 'Verifying...' : 'Verify & Sign In'}
+              <Button
+                type="submit"
+                variant="primary"
+                fullWidth
+                disabled={loading || otpCode.length < 6 || otpAttempts >= MAX_OTP_ATTEMPTS}
+              >
+                {loading ? 'Verifying...' : 'Verify & Continue'}
               </Button>
-              <Button type="button" variant="outline" size="sm" fullWidth onClick={handleReset}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                fullWidth
+                disabled={loading || resendCooldown > 0}
+                onClick={requestOtp}
+              >
+                {resendCooldown > 0 ? `Resend OTP in ${resendCooldown}s` : 'Resend OTP'}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" fullWidth onClick={handleReset}>
                 Change Phone Number
               </Button>
             </div>

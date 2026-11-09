@@ -375,6 +375,31 @@ export const CustomerOrdersSection: React.FC<CustomerOrdersSectionProps> = ({
                   </div>
                 </div>
 
+                {/* Payment summary */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-50/70 rounded-xl p-3 border border-slate-200/70">
+                  <span className="text-slate-600">
+                    Payment:{' '}
+                    <strong className="text-brand-navy">
+                      {order.payment_method === 'cod' ? 'Cash on Delivery' : 'Online (UPI)'}
+                    </strong>
+                  </span>
+                  <span
+                    className={`font-bold ${
+                      order.payment_status === 'paid' ? 'text-emerald-700' : 'text-amber-700'
+                    }`}
+                  >
+                    {order.payment_status === 'paid'
+                      ? 'Paid'
+                      : order.status === 'cancelled'
+                      ? 'Not charged (cancelled)'
+                      : order.payment_method === 'cod'
+                      ? `Unpaid — pay ${formatCurrencyOrPlaceholder(order.total_amount)} on ${
+                          order.delivery_mode === 'pickup' ? 'pickup' : 'delivery'
+                        }`
+                      : 'Payment pending'}
+                  </span>
+                </div>
+
                 {/* Status History Log */}
                 {order.history && order.history.length > 0 && (
                   <details className="text-xs text-slate-600 bg-slate-50/70 rounded-xl p-3 border border-slate-200/70">

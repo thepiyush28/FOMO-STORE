@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import {
   CustomerAddress,
   DeliveryMode,
@@ -33,10 +33,17 @@ import {
 import {
   deleteCustomerAddress,
   fetchCustomerAddresses,
+  newIdempotencyKey,
   placeOrderViaRpc,
   PlaceOrderRpcResult,
   saveCustomerAddress,
 } from '../../lib/supabase';
+import {
+  canSubmitOrder,
+  checkoutReducer,
+  initialCheckoutState,
+  isPaymentMethodAvailable,
+} from '../../lib/checkoutFlow';
 
 interface CartPreviewModalProps {
   isOpen: boolean;
@@ -71,7 +78,14 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   onOrderPlaced,
   onViewOrders,
 }) => {
-  const [step, setStep] = useState<'cart' | 'checkout' | 'confirmed'>('cart');
+  const [flow, dispatch] = useReducer(checkoutReducer, initialCheckoutState);
+  const step = flow.step;
+  const paymentMethod = flow.paymentMethod;
+  // Synchronous single-flight lock: React state updates are async, so a fast double-click
+  // could otherwise fire two submissions before `flow.submitting` becomes true.
+  const submitLock = useRef(false);
+  // One idempotency key per checkout attempt; reused on retry so the backend can de-duplicate.
+  const idempotencyKeyRef = useRef<string | null>(null);
   const [pendingCheckout, setPendingCheckout] = useState(false);
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -87,9 +101,12 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   const [savingAddress, setSavingAddress] = useState(false);
 
   // Order Placement State
-  const [placingOrder, setPlacingOrder] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<PlaceOrderRpcResult | null>(null);
+  const [confirmedSnapshot, setConfirmedSnapshot] = useState<{
+    items: Array<{ name: string; qty: number; lineTotal: number | null }>;
+    fulfillment: string;
+  } | null>(null);
 
   const cartItems = products.filter((p) => (cartQuantities[p.id] || 0) > 0);
   const totalItemsCount = Object.values(cartQuantities).reduce((acc, qty) => acc + qty, 0);
@@ -98,7 +115,9 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
-      setStep('cart');
+      dispatch({ type: 'RESET' });
+      submitLock.current = false;
+      idempotencyKeyRef.current = null;
       setPendingCheckout(false);
       setCheckoutError(null);
       setShowAddressForm(false);
@@ -109,7 +128,7 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
   useEffect(() => {
     if (userId && pendingCheckout) {
       setPendingCheckout(false);
-      setStep('checkout');
+      dispatch({ type: 'GO_DETAILS' });
     }
   }, [userId, pendingCheckout]);
 
@@ -199,13 +218,40 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
       }
       return;
     }
-    setStep('checkout');
+    // Navigation only: this never creates an order.
+    dispatch({ type: 'GO_DETAILS' });
   };
 
-  const handlePlaceOrder = async () => {
+  const handleContinueToPayment = () => {
+    setCheckoutError(null);
+    if (!calc.canCheckout) {
+      setCheckoutError(calc.checkoutBlockReason || 'Cannot continue to payment right now.');
+      return;
+    }
+    if (deliveryMode === 'delivery' && !addrValidation.valid) {
+      setCheckoutError(addrValidation.error || 'Please select a valid delivery address.');
+      return;
+    }
+    dispatch({ type: 'GO_PAYMENT' });
+  };
+
+  const handleReviewOrder = () => {
+    setCheckoutError(null);
+    if (paymentMethod === null) {
+      setCheckoutError('Please select a payment method to continue.');
+      return;
+    }
+    dispatch({ type: 'GO_REVIEW' });
+  };
+
+  /** FINAL confirmation. This is the only code path that creates an order. */
+  const handleConfirmOrder = async () => {
     setCheckoutError(null);
     if (!userId) {
       if (onRequireLogin) onRequireLogin();
+      return;
+    }
+    if (submitLock.current || !canSubmitOrder(flow)) {
       return;
     }
     if (!calc.canCheckout) {
@@ -216,32 +262,69 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
       setCheckoutError(addrValidation.error || 'Please select a valid delivery address.');
       return;
     }
+    if (paymentMethod !== 'cod') {
+      setCheckoutError('Online payment is not available yet. Please choose Cash on Delivery.');
+      return;
+    }
 
-    setPlacingOrder(true);
+    submitLock.current = true;
+    dispatch({ type: 'SUBMIT_START' });
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = newIdempotencyKey();
+    }
     try {
       const payloadItems = cartItems.map((item) => ({
         product_id: item.id,
         quantity: cartQuantities[item.id],
       }));
 
+      // Prices/totals are NOT sent: the database recalculates everything from trusted data.
       const result = await placeOrderViaRpc({
         items: payloadItems,
         deliveryMode,
         addressId: deliveryMode === 'delivery' ? selectedAddressId : null,
         paymentMethod: 'cod',
+        idempotencyKey: idempotencyKeyRef.current,
       });
 
       setConfirmedOrder(result);
+      setConfirmedSnapshot({
+        items: cartItems.map((item) => ({
+          name: item.name,
+          qty: cartQuantities[item.id],
+          lineTotal:
+            item.price !== null && item.price !== undefined
+              ? item.price * cartQuantities[item.id]
+              : null,
+        })),
+        fulfillment:
+          deliveryMode === 'pickup'
+            ? `Store pickup — ${storeConfig.addressPlaceholder}`
+            : selectedAddress
+            ? `${selectedAddress.address_line}${
+                selectedAddress.landmark ? `, near ${selectedAddress.landmark}` : ''
+              } — PIN ${selectedAddress.pincode}`
+            : 'Home delivery',
+      });
       onClearCart();
-      setStep('confirmed');
+      dispatch({ type: 'SUBMIT_SUCCESS', orderNumber: result.order_number });
+      idempotencyKeyRef.current = null;
       if (onOrderPlaced) {
         onOrderPlaced(result);
       }
     } catch (err) {
+      dispatch({ type: 'SUBMIT_FAIL' });
       setCheckoutError(err instanceof Error ? err.message : 'Order placement failed.');
     } finally {
-      setPlacingOrder(false);
+      submitLock.current = false;
     }
+  };
+
+  const placingOrder = flow.submitting;
+  const checkoutTitle: Record<string, string> = {
+    details: 'Step 1 of 3 — Delivery Details',
+    payment: 'Step 2 of 3 — Select Payment Method',
+    review: 'Step 3 of 3 — Review & Confirm Order',
   };
 
   return (
@@ -251,8 +334,8 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
       title={
         step === 'confirmed'
           ? 'Order Confirmed!'
-          : step === 'checkout'
-          ? 'Checkout & Delivery Details'
+          : step === 'details' || step === 'payment' || step === 'review'
+          ? checkoutTitle[step]
           : storeConfig.isLiveData
           ? 'Your Shopping Cart'
           : 'Demo Cart & Breakdown'
@@ -286,12 +369,59 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Fulfillment Mode:</span>
+                <span className="text-slate-500">Placed On:</span>
+                <span className="font-semibold text-brand-navy">
+                  {new Date(confirmedOrder.created_at || Date.now()).toLocaleString('en-IN', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                </span>
+              </div>
+              {confirmedSnapshot && (
+                <div className="pt-1 border-t border-slate-200 space-y-1">
+                  {confirmedSnapshot.items.map((it, idx) => (
+                    <div key={idx} className="flex justify-between text-slate-700">
+                      <span className="truncate pr-2">
+                        {it.name} × {it.qty}
+                      </span>
+                      <span className="font-mono">
+                        {it.lineTotal !== null ? formatCurrencyOrPlaceholder(it.lineTotal) : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-between pt-1 border-t border-slate-200">
+                <span className="text-slate-500">Item Subtotal:</span>
+                <span className="font-mono">{formatCurrencyOrPlaceholder(confirmedOrder.subtotal)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Delivery Fee:</span>
+                <span className="font-mono">
+                  {formatCurrencyOrPlaceholder(confirmedOrder.delivery_fee)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Fulfillment:</span>
                 <span className="font-bold uppercase text-brand-navy">{deliveryMode}</span>
               </div>
+              {confirmedSnapshot && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500 flex-shrink-0">
+                    {deliveryMode === 'pickup' ? 'Pickup:' : 'Address:'}
+                  </span>
+                  <span className="text-right text-slate-700">{confirmedSnapshot.fulfillment}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-500">Payment Method:</span>
                 <span className="font-bold text-brand-navy">Cash on Delivery (COD)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Payment Status:</span>
+                <span className="font-bold text-amber-700">
+                  {confirmedOrder.payment_status === 'paid' ? 'Paid' : 'Unpaid — pay on delivery'}
+                </span>
               </div>
               <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-extrabold text-brand-navy">
                 <span>Total Payable:</span>
@@ -314,8 +444,8 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
               Done & Track Order
             </Button>
           </div>
-        ) : step === 'checkout' ? (
-          /* STEP 2: CHECKOUT SCREEN (ADDRESS, DELIVERY MODE, COD) */
+        ) : step === 'details' || step === 'payment' || step === 'review' ? (
+          /* STEPS 2-4: DELIVERY DETAILS → PAYMENT METHOD → REVIEW & CONFIRM */
           <div className="space-y-4">
             {checkoutError && (
               <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 flex items-start gap-2">
@@ -325,7 +455,7 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
             )}
 
             {/* Fulfillment Mode Toggle */}
-            {onSelectDeliveryMode && (
+            {step === 'details' && onSelectDeliveryMode && (
               <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
@@ -354,8 +484,8 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
               </div>
             )}
 
-            {/* Delivery Address or Pickup Info */}
-            {deliveryMode === 'pickup' ? (
+            {/* Delivery Address or Pickup Info (editable only on the details step) */}
+            {step === 'details' && (deliveryMode === 'pickup' ? (
               <div className="bg-brand-grey-blue p-3.5 rounded-xl border border-slate-200 text-xs space-y-1">
                 <p className="font-bold text-brand-navy flex items-center gap-1.5">
                   <Store className="w-4 h-4 text-brand-orange" />
@@ -499,47 +629,117 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
                   </div>
                 )}
               </div>
+            ))}
+
+            {/* STEP: PAYMENT METHOD SELECTION (selecting a method never creates an order) */}
+            {step === 'payment' && (
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-brand-navy uppercase tracking-wider block">
+                  Select Payment Method
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'SELECT_PAYMENT', method: 'cod' })}
+                  aria-pressed={paymentMethod === 'cod'}
+                  className={`w-full p-3 rounded-xl border-2 flex items-center justify-between text-left transition-all ${
+                    paymentMethod === 'cod'
+                      ? 'border-brand-orange bg-brand-orange-tint/30'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Banknote className="w-5 h-5 text-brand-orange" />
+                    <div>
+                      <span className="text-xs font-bold text-brand-navy block">
+                        Cash on Delivery (COD)
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        Pay{' '}
+                        {calc.totalAmount !== null
+                          ? formatCurrencyOrPlaceholder(calc.totalAmount)
+                          : 'the total'}{' '}
+                        in cash when you {deliveryMode === 'pickup' ? 'collect' : 'receive'} your
+                        order
+                      </span>
+                    </div>
+                  </div>
+                  {paymentMethod === 'cod' && (
+                    <Badge variant="orange" size="sm">
+                      Selected
+                    </Badge>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!isPaymentMethodAvailable('upi')}
+                  className="w-full p-3 rounded-xl border border-slate-200 bg-slate-50 opacity-70 flex items-center justify-between text-left cursor-not-allowed"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CreditCard className="w-5 h-5 text-slate-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-600 block">
+                        UPI &amp; Online Payment
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Online payment setup is pending. Please use Cash on Delivery for now.
+                      </span>
+                    </div>
+                  </div>
+                  <Badge variant="placeholder" size="sm">
+                    Setup Pending
+                  </Badge>
+                </button>
+              </div>
             )}
 
-            {/* Payment Method (COD Active, UPI Placeholder) */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-brand-navy uppercase tracking-wider block">
-                Payment Method
-              </span>
-              <div className="p-3 rounded-xl border-2 border-brand-orange bg-brand-orange-tint/30 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Banknote className="w-5 h-5 text-brand-orange" />
-                  <div>
-                    <span className="text-xs font-bold text-brand-navy block">
-                      Cash on Delivery (COD)
-                    </span>
-                    <span className="text-[11px] text-slate-600">
-                      Pay in cash when you receive your order
-                    </span>
-                  </div>
+            {/* STEP: FINAL REVIEW */}
+            {step === 'review' && (
+              <div className="space-y-2.5 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1">
+                  <span className="text-[11px] font-bold text-brand-navy uppercase tracking-wider block">
+                    Items
+                  </span>
+                  {cartItems.map((item) => (
+                    <div key={item.id} className="flex justify-between text-slate-700">
+                      <span className="truncate pr-2">
+                        {item.name} × {cartQuantities[item.id]}
+                      </span>
+                      <span className="font-mono font-semibold">
+                        {item.price !== null && item.price !== undefined
+                          ? formatCurrencyOrPlaceholder(item.price * cartQuantities[item.id])
+                          : item.pricePlaceholder}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <Badge variant="orange" size="sm">
-                  Selected
-                </Badge>
-              </div>
-
-              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 opacity-60 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <CreditCard className="w-5 h-5 text-slate-400" />
-                  <div>
-                    <span className="text-xs font-bold text-slate-600 block">
-                      UPI & Online Payments
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Coming in a later phase after payment gateway setup
-                    </span>
-                  </div>
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-1">
+                  <span className="text-[11px] font-bold text-brand-navy uppercase tracking-wider block">
+                    {deliveryMode === 'pickup' ? 'Store Pickup' : 'Delivering To'}
+                  </span>
+                  {deliveryMode === 'pickup' ? (
+                    <p className="text-slate-600">{storeConfig.addressPlaceholder}</p>
+                  ) : selectedAddress ? (
+                    <p className="text-slate-600">
+                      {selectedAddress.address_line}
+                      {selectedAddress.landmark ? `, near ${selectedAddress.landmark}` : ''} — PIN{' '}
+                      {selectedAddress.pincode}
+                    </p>
+                  ) : null}
                 </div>
-                <Badge variant="placeholder" size="sm">
-                  Later Phase
-                </Badge>
+                <div className="bg-white p-3 rounded-xl border border-slate-200 flex justify-between">
+                  <span className="text-slate-600">Payment method</span>
+                  <span className="font-bold text-brand-navy">
+                    {paymentMethod === 'cod' ? 'Cash on Delivery (COD)' : 'Not selected'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  No order has been placed yet. Your order is created only when you press the
+                  confirm button below.
+                </p>
               </div>
-            </div>
+            )}
 
             {/* Final Bill Summary */}
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1.5 text-xs">
@@ -573,16 +773,50 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
             </div>
 
             <div className="flex flex-col gap-2 pt-1">
+              {step === 'details' && (
+                <Button
+                  variant="primary"
+                  fullWidth
+                  disabled={!calc.canCheckout}
+                  onClick={handleContinueToPayment}
+                >
+                  Continue to Payment
+                </Button>
+              )}
+              {step === 'payment' && (
+                <Button
+                  variant="primary"
+                  fullWidth
+                  disabled={paymentMethod === null}
+                  onClick={handleReviewOrder}
+                >
+                  {paymentMethod === null ? 'Select a Payment Method' : 'Review Order'}
+                </Button>
+              )}
+              {step === 'review' && (
+                <Button
+                  variant="primary"
+                  fullWidth
+                  disabled={placingOrder || !calc.canCheckout || !canSubmitOrder(flow)}
+                  onClick={handleConfirmOrder}
+                >
+                  {placingOrder
+                    ? 'Placing Order...'
+                    : `Confirm Order — Pay ${
+                        calc.totalAmount !== null
+                          ? formatCurrencyOrPlaceholder(calc.totalAmount)
+                          : ''
+                      } on ${deliveryMode === 'pickup' ? 'Pickup' : 'Delivery'}`}
+                </Button>
+              )}
               <Button
-                variant="primary"
+                variant="ghost"
+                size="sm"
                 fullWidth
-                disabled={placingOrder || !calc.canCheckout}
-                onClick={handlePlaceOrder}
+                disabled={placingOrder}
+                onClick={() => dispatch({ type: 'BACK' })}
               >
-                {placingOrder ? 'Placing Order...' : 'Place Order (Cash on Delivery)'}
-              </Button>
-              <Button variant="ghost" size="sm" fullWidth onClick={() => setStep('cart')}>
-                Back to Cart
+                {step === 'details' ? 'Back to Cart' : 'Back'}
               </Button>
             </div>
           </div>
@@ -788,7 +1022,7 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
                     disabled={!calc.canCheckout}
                     onClick={handleProceedToCheckout}
                   >
-                    <span>Proceed to Checkout</span>
+                    <span>Continue to Checkout</span>
                   </Button>
                 )}
 
@@ -796,7 +1030,11 @@ export const CartPreviewModal: React.FC<CartPreviewModalProps> = ({
                   variant="ghost"
                   size="sm"
                   fullWidth
-                  onClick={onClearCart}
+                  onClick={() => {
+                    if (window.confirm('Remove all items from your cart?')) {
+                      onClearCart();
+                    }
+                  }}
                   className="text-slate-500 hover:text-rose-600 gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

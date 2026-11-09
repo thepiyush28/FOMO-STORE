@@ -10,7 +10,10 @@
     "dev:production": "vite --mode production",
     "build:production": "tsc -b && vite build --mode production",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:checkout-flow": "node tests/checkout-flow.test.mjs",
+    "test:db-checkout": "node tests/db-checkout-payment.test.mjs",
+    "test": "node tests/checkout-flow.test.mjs && node tests/db-checkout-payment.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

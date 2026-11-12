@@ -34,7 +34,11 @@ import {
   AlertTriangle,
   Clock,
   History,
+  Eye,
+  EyeOff,
+  Compass,
 } from 'lucide-react';
+import { buildNavigationUrls } from '../lib/maps';
 
 export const RiderAppPage: React.FC = () => {
   const { userId, profile, isLoadingAuth, isSupabaseReady, refreshProfile, signOut } = useAuth();
@@ -50,6 +54,7 @@ export const RiderAppPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'active' | 'history'>('active');
+  const [showMapOrderId, setShowMapOrderId] = useState<string | null>(null);
 
   const isRiderAuthorized = isRoleAuthorized(profile?.role, 'rider');
 
@@ -277,16 +282,13 @@ export const RiderAppPage: React.FC = () => {
   );
   const completedDeliveries = assignedOrders.filter((o) => o.status === 'delivered');
 
-  const buildGoogleMapsUrl = (ord: OrderRecord): string => {
-    const parts = [
+  const getNav = (ord: OrderRecord) => {
+    return buildNavigationUrls(
       ord.delivery_address?.address_line,
       ord.delivery_address?.landmark,
       ord.delivery_address?.pincode,
-      'Rajauli, Nawada, Bihar',
-    ].filter(Boolean);
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-      parts.join(', ')
-    )}`;
+      'Rajauli'
+    );
   };
 
   return (
@@ -485,31 +487,112 @@ export const RiderAppPage: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2.5 pt-2">
-                        {ord.customer_phone ? (
-                          <a
-                            href={`tel:${ord.customer_phone}`}
-                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-brand-navy text-white font-bold text-xs hover:bg-brand-navy-light touch-target"
-                          >
-                            <Phone className="w-4 h-4 text-brand-orange" />
-                            <span>Call Customer</span>
-                          </a>
-                        ) : (
-                          <span className="px-3 py-2.5 rounded-xl bg-slate-200 text-slate-500 font-semibold text-center">
-                            No Phone Listed
-                          </span>
-                        )}
+                      {/* Actions: Call, OpenStreetMap Route, Google Maps */}
+                      {(() => {
+                        const nav = getNav(ord);
+                        const isMapOpen = showMapOrderId === ord.id;
+                        return (
+                          <div className="space-y-2 pt-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              {ord.customer_phone ? (
+                                <a
+                                  href={`tel:${ord.customer_phone}`}
+                                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-brand-navy text-white font-bold text-xs hover:bg-brand-navy-light touch-target"
+                                >
+                                  <Phone className="w-4 h-4 text-brand-orange" />
+                                  <span>Call Customer</span>
+                                </a>
+                              ) : (
+                                <span className="px-3 py-2.5 rounded-xl bg-slate-200 text-slate-500 font-semibold text-center text-xs flex items-center justify-center">
+                                  No Phone Listed
+                                </span>
+                              )}
 
-                        <a
-                          href={buildGoogleMapsUrl(ord)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white border border-brand-navy text-brand-navy font-bold text-xs hover:bg-slate-50 touch-target"
-                        >
-                          <Navigation className="w-4 h-4 text-brand-orange" />
-                          <span>Google Maps</span>
-                        </a>
-                      </div>
+                              <button
+                                type="button"
+                                onClick={() => setShowMapOrderId(isMapOpen ? null : ord.id)}
+                                className={`inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl font-bold text-xs touch-target border transition-all ${
+                                  isMapOpen
+                                    ? 'bg-brand-navy text-white border-brand-navy'
+                                    : 'bg-white text-brand-navy border-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                {isMapOpen ? (
+                                  <>
+                                    <EyeOff className="w-4 h-4 text-brand-orange" />
+                                    <span>Hide Map</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye className="w-4 h-4 text-brand-orange" />
+                                    <span>View Map Preview</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+
+                            {/* Dual Navigation: OpenStreetMap (Primary) + Google Maps (Fallback) */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <a
+                                href={nav.osmDirectionsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-brand-orange text-brand-navy font-black text-xs hover:bg-brand-orange/90 shadow-xs touch-target"
+                              >
+                                <Compass className="w-4 h-4" />
+                                <span>OSM Directions</span>
+                              </a>
+
+                              <a
+                                href={nav.googleMapsDirectionsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white border border-brand-navy text-brand-navy font-bold text-xs hover:bg-slate-50 touch-target"
+                              >
+                                <Navigation className="w-4 h-4 text-brand-orange" />
+                                <span>Google Maps</span>
+                              </a>
+                            </div>
+
+                            {/* Embedded OpenStreetMap Preview Widget */}
+                            {isMapOpen && (
+                              <div className="mt-2 rounded-xl overflow-hidden border border-slate-300 bg-slate-100 shadow-xs animate-fadeIn">
+                                <div className="bg-brand-navy text-white px-3 py-1.5 text-[11px] font-bold flex items-center justify-between">
+                                  <span className="flex items-center gap-1.5">
+                                    <MapPin className="w-3.5 h-3.5 text-brand-orange" />
+                                    <span>OpenStreetMap Location Preview</span>
+                                  </span>
+                                  <span className="text-[10px] text-emerald-400 font-mono">
+                                    Open Share Map API
+                                  </span>
+                                </div>
+                                <div className="relative w-full h-48 bg-slate-200">
+                                  <iframe
+                                    title={`Map-${ord.order_number}`}
+                                    width="100%"
+                                    height="100%"
+                                    frameBorder="0"
+                                    scrolling="no"
+                                    src={nav.embedUrl}
+                                    className="w-full h-full border-0"
+                                  />
+                                </div>
+                                <div className="p-2 bg-white flex justify-between items-center text-[11px] text-slate-600 border-t border-slate-200">
+                                  <span className="truncate pr-2">{nav.displayText}</span>
+                                  <a
+                                    href={nav.osmSearchUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-brand-orange font-bold hover:underline shrink-0"
+                                  >
+                                    Full OSM View ↗
+                                  </a>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* COD Collection Banner */}

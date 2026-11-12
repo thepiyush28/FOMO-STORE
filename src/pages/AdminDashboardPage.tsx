@@ -44,6 +44,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
+import { Modal } from '../components/ui/Modal';
 import { PhoneOtpModal } from '../components/auth/PhoneOtpModal';
 import {
   ShieldCheck,
@@ -72,7 +73,56 @@ import {
   KeyRound,
   Phone,
   XCircle,
+  MapPin,
+  Navigation,
+  Store,
+  Building2,
+  FileText,
+  User,
+  Clock,
+  Compass,
 } from 'lucide-react';
+import { buildNavigationUrls } from '../lib/maps';
+
+export interface ApnaMartStore {
+  id: string;
+  code: string;
+  name: string;
+  city: string;
+  district: string;
+  status: 'active' | 'coming_soon';
+  serviceablePincodes: string[];
+}
+
+export const APNA_MART_STORES: ApnaMartStore[] = [
+  {
+    id: 'raj-01',
+    code: 'RAJ-01',
+    name: 'Store 01: Rajauli Main Market',
+    city: 'Rajauli',
+    district: 'Nawada, Bihar',
+    status: 'active',
+    serviceablePincodes: ['805125'],
+  },
+  {
+    id: 'naw-01',
+    code: 'NAW-01',
+    name: 'Store 02: Nawada Town Center (Expansion Node)',
+    city: 'Nawada',
+    district: 'Nawada, Bihar',
+    status: 'coming_soon',
+    serviceablePincodes: ['805110'],
+  },
+  {
+    id: 'his-01',
+    code: 'HIS-01',
+    name: 'Store 03: Hisua Bazar (Expansion Node)',
+    city: 'Hisua',
+    district: 'Nawada, Bihar',
+    status: 'coming_soon',
+    serviceablePincodes: ['805103'],
+  },
+];
 
 type AdminTab =
   | 'overview'
@@ -99,6 +149,10 @@ export const AdminDashboardPage: React.FC = () => {
 
   // Dashboard state
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  // Multi-Store (Apna Mart Expansion Model): Store & City filter
+  const [selectedStoreId, setSelectedStoreId] = useState<string>('raj-01');
+  const [inspectedOrder, setInspectedOrder] = useState<OrderRecord | null>(null);
+  const [showOrderMap, setShowOrderMap] = useState<boolean>(true);
   const [loadingData, setLoadingData] = useState(false);
   const [togglingStoreOpen, setTogglingStoreOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -864,9 +918,19 @@ export const AdminDashboardPage: React.FC = () => {
     { id: 'settings', label: 'Store Settings', icon: Settings },
   ];
 
-  const filteredOrders = orders.filter(
-    (o) => orderStatusFilter === 'all' || o.status === orderStatusFilter
-  );
+  const filteredOrders = orders.filter((o) => {
+    const matchesStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
+    if (!matchesStatus) return false;
+    if (selectedStoreId === 'all') return true;
+    if (selectedStoreId === 'raj-01') {
+      const pin = o.delivery_address?.pincode;
+      return !pin || pin === '805125' || o.delivery_mode === 'pickup';
+    }
+    const store = APNA_MART_STORES.find((s) => s.id === selectedStoreId);
+    if (!store) return true;
+    const pin = o.delivery_address?.pincode;
+    return pin ? store.serviceablePincodes.includes(pin) : false;
+  });
 
   const displayedInventory = onlyLowStock
     ? products.filter((p) => p.stock_quantity <= p.low_stock_threshold)
@@ -900,7 +964,25 @@ export const AdminDashboardPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Multi-Store & City Selector (Apna Mart Model) */}
+            <div className="flex items-center gap-2 bg-white/10 px-2.5 py-1.5 rounded-xl border border-white/20">
+              <Building2 className="w-4 h-4 text-brand-orange shrink-0" />
+              <select
+                value={selectedStoreId}
+                onChange={(e) => setSelectedStoreId(e.target.value)}
+                className="bg-transparent text-white font-bold text-xs py-0.5 px-1 rounded-lg border-0 focus:outline-none focus:ring-1 focus:ring-brand-orange cursor-pointer"
+                title="Select Store Location (Apna Mart Multi-Store Model)"
+              >
+                <option value="all" className="text-brand-navy">All Stores (Consolidated HQ)</option>
+                {APNA_MART_STORES.map((s) => (
+                  <option key={s.id} value={s.id} className="text-brand-navy">
+                    {s.name} ({s.city}) {s.status === 'coming_soon' ? '• Coming Soon' : '• Active'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Quick Store Open/Closed Control in Header */}
             <button
               onClick={() => handleQuickToggleStoreOpen(!settings.is_open)}
@@ -1362,11 +1444,22 @@ export const AdminDashboardPage: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="text-right">
-                          <span className="text-xs text-slate-400 block">COD Total</span>
-                          <span className="text-lg font-black text-brand-navy font-mono">
-                            ₹{ord.total_amount.toFixed(0)}
-                          </span>
+                        <div className="text-right flex flex-col items-end gap-1.5">
+                          <div>
+                            <span className="text-xs text-slate-400 block">COD Total</span>
+                            <span className="text-lg font-black text-brand-navy font-mono">
+                              ₹{ord.total_amount.toFixed(0)}
+                            </span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setInspectedOrder(ord)}
+                            className="gap-1.5 text-xs font-bold"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-brand-orange" />
+                            <span>View Full Dossier & Map</span>
+                          </Button>
                         </div>
                       </div>
 
@@ -2551,6 +2644,262 @@ export const AdminDashboardPage: React.FC = () => {
             </form>
           </Card>
         )}
+
+        {/* COMPREHENSIVE ORDER DOSSIER & MAP MODAL */}
+        {inspectedOrder && (() => {
+          const nav = buildNavigationUrls(
+            inspectedOrder.delivery_address?.address_line,
+            inspectedOrder.delivery_address?.landmark,
+            inspectedOrder.delivery_address?.pincode,
+            'Rajauli'
+          );
+          const assignedPartner = riders.find((r) => r.id === inspectedOrder.delivery_partner_id);
+
+          return (
+            <Modal
+              isOpen={Boolean(inspectedOrder)}
+              onClose={() => setInspectedOrder(null)}
+              title={`Order Dossier: ${inspectedOrder.order_number}`}
+              maxWidth="max-w-3xl"
+            >
+              <div className="space-y-4 text-xs overflow-y-auto max-h-[75vh] pr-1">
+                {/* Header Metrics */}
+                <div className="bg-brand-grey-blue p-4 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-black text-brand-navy">
+                        {inspectedOrder.order_number}
+                      </span>
+                      <Badge variant={inspectedOrder.status === 'cancelled' ? 'red' : 'orange'} size="sm">
+                        {ORDER_STATUS_LABELS[inspectedOrder.status]}
+                      </Badge>
+                      <Badge variant="neutral" size="sm" className="uppercase font-mono">
+                        {inspectedOrder.delivery_mode}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>Placed on {new Date(inspectedOrder.created_at).toLocaleString()}</span>
+                    </p>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[11px] text-slate-500 block">Total Amount</span>
+                    <span className="text-xl font-black text-brand-navy font-mono">
+                      ₹{inspectedOrder.total_amount.toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Multi-Store Node & Customer Contact Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Customer Information */}
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                    <div className="flex items-center gap-1.5 font-bold text-brand-navy border-b border-slate-200 pb-1.5">
+                      <User className="w-4 h-4 text-brand-orange" />
+                      <span>Customer Details</span>
+                    </div>
+                    <div className="space-y-1 text-slate-700">
+                      <p><strong>Name:</strong> {inspectedOrder.customer_name || 'Customer'}</p>
+                      <p className="flex items-center gap-2">
+                        <strong>Phone:</strong> {inspectedOrder.customer_phone || 'Not provided'}
+                        {inspectedOrder.customer_phone && (
+                          <a
+                            href={`tel:${inspectedOrder.customer_phone}`}
+                            className="text-brand-orange hover:underline font-bold inline-flex items-center gap-1 text-[11px]"
+                          >
+                            <Phone className="w-3 h-3" /> Call
+                          </a>
+                        )}
+                      </p>
+                      <p><strong>Fulfillment:</strong> <span className="uppercase font-semibold">{inspectedOrder.delivery_mode}</span></p>
+                      {inspectedOrder.delivery_mode === 'delivery' && inspectedOrder.delivery_address && (
+                        <div className="pt-1 text-[11px] text-slate-600 space-y-0.5">
+                          <p><strong>Address:</strong> {inspectedOrder.delivery_address.address_line}</p>
+                          {inspectedOrder.delivery_address.landmark && (
+                            <p><strong>Landmark:</strong> {inspectedOrder.delivery_address.landmark}</p>
+                          )}
+                          <p className="font-mono"><strong>PIN:</strong> {inspectedOrder.delivery_address.pincode}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Store Node & Rider Assignment */}
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                    <div className="flex items-center gap-1.5 font-bold text-brand-navy border-b border-slate-200 pb-1.5">
+                      <Store className="w-4 h-4 text-brand-orange" />
+                      <span>Store Hub & Rider Dispatch</span>
+                    </div>
+                    <div className="space-y-1 text-slate-700">
+                      <p><strong>Fulfillment Hub:</strong> Store 01: Rajauli Main Market (RAJ-01)</p>
+                      <p><strong>City / Zone:</strong> Rajauli, Nawada (Bihar 805125)</p>
+                      <div className="pt-1">
+                        <strong>Assigned Rider:</strong>
+                        {assignedPartner ? (() => {
+                          const riderProfile = profiles.find((p) => p.id === assignedPartner.user_id) || assignedPartner.profile;
+                          return (
+                            <div className="mt-1 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-[11px]">
+                              <p className="font-bold">{riderProfile?.full_name || 'Rider Partner'}</p>
+                              <p className="font-mono">{riderProfile?.phone || 'No phone'} • Vehicle: {assignedPartner.vehicle_details || 'Bike'}</p>
+                            </div>
+                          );
+                        })() : (
+                          <span className="ml-2 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-semibold text-[11px]">
+                            Not Yet Assigned
+                          </span>
+                        )}
+                      </div>
+                      <div className="pt-1">
+                        <strong>Payment Status:</strong>{' '}
+                        <Badge variant={inspectedOrder.payment_status === 'paid' ? 'green' : 'orange'} size="sm">
+                          {inspectedOrder.payment_status === 'paid' ? 'PAID' : 'COD (COLLECT ON DELIVERY)'}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* OpenStreetMap Delivery Location View */}
+                {inspectedOrder.delivery_mode === 'delivery' && (
+                  <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden space-y-2">
+                    <div className="bg-brand-navy text-white px-3.5 py-2 flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5">
+                        <MapPin className="w-4 h-4 text-brand-orange" />
+                        <span>Delivery Location Map (OpenStreetMap Engine)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowOrderMap(!showOrderMap)}
+                        className="text-[11px] text-brand-orange hover:underline font-bold"
+                      >
+                        {showOrderMap ? 'Hide Map' : 'Show Map'}
+                      </button>
+                    </div>
+
+                    {showOrderMap && (
+                      <div className="p-3 space-y-2">
+                        <div className="relative w-full h-44 rounded-lg overflow-hidden border border-slate-300 bg-slate-200">
+                          <iframe
+                            title={`Map-${inspectedOrder.order_number}`}
+                            width="100%"
+                            height="100%"
+                            frameBorder="0"
+                            scrolling="no"
+                            src={nav.embedUrl}
+                            className="w-full h-full border-0"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <span className="text-slate-600 font-mono truncate max-w-sm">
+                            {nav.displayText}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href={nav.osmDirectionsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3 py-1.5 rounded-lg bg-brand-orange text-brand-navy font-bold hover:bg-brand-orange/90 inline-flex items-center gap-1"
+                            >
+                              <Compass className="w-3.5 h-3.5" />
+                              <span>OSM Directions</span>
+                            </a>
+                            <a
+                              href={nav.googleMapsDirectionsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold hover:bg-slate-100 inline-flex items-center gap-1"
+                            >
+                              <Navigation className="w-3.5 h-3.5 text-brand-navy" />
+                              <span>Google Maps</span>
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Itemized Basket */}
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2">
+                  <span className="font-bold text-brand-navy uppercase tracking-wider block text-[11px]">
+                    Itemized Order Basket ({inspectedOrder.items.length} items)
+                  </span>
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="bg-slate-100/70 p-2 grid grid-cols-12 text-[11px] font-bold text-slate-600">
+                      <span className="col-span-6">Product / Item</span>
+                      <span className="col-span-2 text-center">Unit Price</span>
+                      <span className="col-span-2 text-center">Qty</span>
+                      <span className="col-span-2 text-right">Total</span>
+                    </div>
+                    {inspectedOrder.items.map((item) => (
+                      <div key={item.id} className="p-2 grid grid-cols-12 text-xs items-center">
+                        <div className="col-span-6 font-semibold text-brand-navy">
+                          {item.product_name} {item.unit ? <span className="text-slate-500 text-[11px]">({item.unit})</span> : ''}
+                        </div>
+                        <span className="col-span-2 text-center font-mono">₹{item.unit_price.toFixed(0)}</span>
+                        <span className="col-span-2 text-center font-bold">{item.quantity}</span>
+                        <span className="col-span-2 text-right font-mono font-bold text-brand-navy">₹{item.total_price.toFixed(0)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Bill Breakdown */}
+                  <div className="pt-2 text-xs space-y-1 max-w-xs ml-auto">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Item Subtotal:</span>
+                      <span className="font-mono font-semibold">₹{inspectedOrder.subtotal.toFixed(0)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Delivery Fee ({inspectedOrder.delivery_mode}):</span>
+                      <span className="font-mono font-semibold">₹{inspectedOrder.delivery_fee.toFixed(0)}</span>
+                    </div>
+                    {inspectedOrder.discount_amount > 0 && (
+                      <div className="flex justify-between text-emerald-700">
+                        <span>Discount:</span>
+                        <span className="font-mono">-₹{inspectedOrder.discount_amount.toFixed(0)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm font-extrabold text-brand-navy pt-1 border-t border-slate-200">
+                      <span>Total Payable:</span>
+                      <span className="font-mono text-brand-orange">₹{inspectedOrder.total_amount.toFixed(0)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Audit Status History Timeline */}
+                {inspectedOrder.history && inspectedOrder.history.length > 0 && (
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                    <span className="font-bold text-brand-navy uppercase tracking-wider block text-[11px]">
+                      Status Transition Audit History ({inspectedOrder.history.length} updates)
+                    </span>
+                    <div className="space-y-1.5 pl-2 border-l-2 border-brand-orange">
+                      {inspectedOrder.history.map((h) => (
+                        <div key={h.id} className="text-[11px] flex flex-wrap justify-between gap-2">
+                          <span>
+                            <strong className="uppercase text-brand-navy">{h.status}:</strong>{' '}
+                            {h.note || 'Status updated'}
+                          </span>
+                          <span className="text-slate-400 font-mono">
+                            {new Date(h.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer Actions */}
+                <div className="pt-2 flex justify-end">
+                  <Button variant="outline" size="sm" onClick={() => setInspectedOrder(null)}>
+                    Close Dossier
+                  </Button>
+                </div>
+              </div>
+            </Modal>
+          );
+        })()}
       </main>
     </div>
   );

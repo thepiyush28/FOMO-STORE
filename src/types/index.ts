@@ -117,6 +117,22 @@ export interface OrderRiderInfo {
   vehicle_details: string | null;
 }
 
+export interface StoreLocation {
+  id: string;
+  store_code: string;
+  name: string;
+  city: string;
+  district: string;
+  state: string;
+  address_line: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  serviceable_pincodes: string[];
+  is_open: boolean;
+  delivery_fee?: number | null;
+  status: 'active' | 'coming_soon' | 'inactive';
+}
+
 export interface OrderDeliveryAddressSnapshot {
   type?: 'store_pickup';
   address_line?: string;
@@ -149,6 +165,8 @@ export interface OrderRecord {
   customer_name?: string | null;
   customer_phone?: string | null;
   rider_info?: OrderRiderInfo | null;
+  store_id?: string | null;
+  store_name?: string | null;
 }
 
 export interface AdminProductRow {
